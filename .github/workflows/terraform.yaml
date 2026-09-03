@@ -1,0 +1,82 @@
+name: reusable-terraform
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        required: false
+        default: .
+      terraform-version:
+        type: string
+        required: false
+        default: 1.16.0
+      apply:
+        type: boolean
+        required: false
+        default: false
+      environment:
+        type: string
+        required: false
+        default: infrastructure
+    secrets:
+      TF_BACKEND_CONFIG:
+        required: true
+      TF_VARS:
+        required: false
+      AWS_ACCESS_KEY_ID:
+        required: false
+      AWS_SECRET_ACCESS_KEY:
+        required: false
+      AWS_SESSION_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-24.04
+    environment: ${{ inputs.apply && inputs.environment || '' }}
+    concurrency:
+      group: terraform-${{ github.repository }}-${{ inputs.working-directory }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    env:
+      TF_IN_AUTOMATION: "true"
+      TF_INPUT: "false"
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: hashicorp/setup-terraform@v4.0.1
+        with:
+          terraform_version: ${{ inputs.terraform-version }}
+          terraform_wrapper: false
+      - name: Write ephemeral configuration
+        shell: bash
+        env:
+          BACKEND_CONFIG: ${{ secrets.TF_BACKEND_CONFIG }}
+          TF_VARS_CONTENT: ${{ secrets.TF_VARS }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "$BACKEND_CONFIG" > "$RUNNER_TEMP/backend.hcl"
+          if [[ -n "$TF_VARS_CONTENT" ]]; then
+            printf '%s' "$TF_VARS_CONTENT" > "$RUNNER_TEMP/runtime.auto.tfvars"
+            cp "$RUNNER_TEMP/runtime.auto.tfvars" ./runtime.auto.tfvars
+          fi
+      - name: Format check
+        run: terraform fmt -check -recursive
+      - name: Initialize backend
+        run: terraform init -input=false -backend-config="$RUNNER_TEMP/backend.hcl"
+      - name: Validate
+        run: terraform validate
+      - name: Plan
+        run: terraform plan -lock-timeout=5m -out="$RUNNER_TEMP/tfplan"
+      - name: Apply approved plan
+        if: inputs.apply
+        run: terraform apply -lock-timeout=5m -auto-approve "$RUNNER_TEMP/tfplan"

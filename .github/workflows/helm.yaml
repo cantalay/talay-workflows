@@ -1,0 +1,70 @@
+name: reusable-helm
+
+on:
+  workflow_call:
+    inputs:
+      charts-directory:
+        type: string
+        required: false
+        default: charts
+      helm-version:
+        type: string
+        required: false
+        default: v4.2.4
+      publish:
+        type: boolean
+        required: false
+        default: false
+      registry:
+        type: string
+        required: false
+        default: ghcr.io
+      registry-namespace:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: azure/setup-helm@v5.0.1
+        with:
+          version: ${{ inputs.helm-version }}
+      - name: Build, lint and render charts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/packages"
+          for chart in "${{ inputs.charts-directory }}"/*; do
+            [[ -f "$chart/Chart.yaml" ]] || continue
+            if grep -q '^type: library' "$chart/Chart.yaml"; then
+              helm lint "$chart"
+              continue
+            fi
+            helm dependency build "$chart"
+            helm lint "$chart" --strict
+            helm template test "$chart" --namespace test >/dev/null
+            helm package "$chart" --destination "$RUNNER_TEMP/packages"
+          done
+      - name: Login to OCI registry
+        if: inputs.publish
+        shell: bash
+        run: echo "${{ github.token }}" | helm registry login "${{ inputs.registry }}" --username "${{ github.actor }}" --password-stdin
+      - name: Publish immutable chart packages
+        if: inputs.publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          for package in "$RUNNER_TEMP/packages"/*.tgz; do
+            helm push "$package" "oci://${{ inputs.registry }}/${{ inputs.registry-namespace }}"
+          done
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: helm-packages
+          path: ${{ runner.temp }}/packages/*.tgz
+          if-no-files-found: error

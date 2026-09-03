@@ -1,0 +1,62 @@
+name: reusable-expo-mobile
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        required: false
+        default: "24"
+      package-manager:
+        type: string
+        required: false
+        default: npm
+      platform:
+        type: string
+        required: false
+        default: all
+      profile:
+        type: string
+        required: false
+        default: production
+      submit:
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      EXPO_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    environment: mobile-${{ inputs.profile }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager }}
+      - uses: expo/expo-github-action@9.0.0
+        with:
+          eas-version: 23.2.0
+          token: ${{ secrets.EXPO_TOKEN }}
+      - name: Install and test
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          case "${{ inputs.package-manager }}" in
+            npm) npm ci && npm test ;;
+            pnpm) pnpm install --frozen-lockfile && pnpm test ;;
+            yarn) yarn install --immutable && yarn test ;;
+            *) exit 2 ;;
+          esac
+      - name: EAS build
+        run: eas build --platform "${{ inputs.platform }}" --profile "${{ inputs.profile }}" --non-interactive --no-wait
+      - name: EAS submit latest build
+        if: inputs.submit
+        run: eas submit --platform "${{ inputs.platform }}" --profile "${{ inputs.profile }}" --latest --non-interactive

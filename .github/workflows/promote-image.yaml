@@ -1,0 +1,58 @@
+name: reusable-promote-image
+
+on:
+  workflow_call:
+    inputs:
+      environments-repository:
+        type: string
+        required: true
+      environments-owner:
+        type: string
+        required: true
+      values-file:
+        type: string
+        required: true
+      image-tag:
+        type: string
+        required: true
+      target-branch:
+        type: string
+        required: false
+        default: main
+    secrets:
+      APP_ID:
+        required: true
+      APP_PRIVATE_KEY:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ inputs.environments-owner }}
+          repositories: ${{ inputs.environments-repository }}
+      - uses: actions/checkout@v7.0.1
+        with:
+          repository: ${{ inputs.environments-owner }}/${{ inputs.environments-repository }}
+          ref: ${{ inputs.target-branch }}
+          token: ${{ steps.app-token.outputs.token }}
+      - name: Update immutable image tag
+        uses: mikefarah/yq@v4.53.6
+        with:
+          cmd: yq -i '.image.tag = "${{ inputs.image-tag }}"' '${{ inputs.values-file }}'
+      - uses: peter-evans/create-pull-request@v8.1.1
+        with:
+          token: ${{ steps.app-token.outputs.token }}
+          branch: promote/${{ inputs.image-tag }}
+          delete-branch: true
+          commit-message: "chore: promote image to ${{ inputs.image-tag }}"
+          title: "chore: promote image to ${{ inputs.image-tag }}"
+          body: Automated immutable image promotion from `${{ github.repository }}@${{ github.sha }}`.
