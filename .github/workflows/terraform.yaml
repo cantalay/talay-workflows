@@ -10,7 +10,7 @@ on:
       terraform-version:
         type: string
         required: false
-        default: 1.16.0
+        default: 1.16.1
       apply:
         type: boolean
         required: false
