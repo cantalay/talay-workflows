@@ -21,14 +21,10 @@ on:
         default: infrastructure
     secrets:
       TF_BACKEND_CONFIG:
-        required: true
+        required: false
       TF_VARS:
         required: false
-      AWS_ACCESS_KEY_ID:
-        required: false
-      AWS_SECRET_ACCESS_KEY:
-        required: false
-      AWS_SESSION_TOKEN:
+      KUBE_CONFIG:
         required: false
 
 permissions:
@@ -47,9 +43,6 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
-      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_SESSION_TOKEN: ${{ secrets.AWS_SESSION_TOKEN }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: hashicorp/setup-terraform@v4.0.1
@@ -61,10 +54,17 @@ jobs:
         env:
           BACKEND_CONFIG: ${{ secrets.TF_BACKEND_CONFIG }}
           TF_VARS_CONTENT: ${{ secrets.TF_VARS }}
+          KUBE_CONFIG_CONTENT: ${{ secrets.KUBE_CONFIG }}
         run: |
           set -euo pipefail
           umask 077
-          printf '%s' "$BACKEND_CONFIG" > "$RUNNER_TEMP/backend.hcl"
+          if [[ -n "$BACKEND_CONFIG" ]]; then
+            printf '%s' "$BACKEND_CONFIG" > "$RUNNER_TEMP/backend.hcl"
+          fi
+          if [[ -n "$KUBE_CONFIG_CONTENT" ]]; then
+            printf '%s' "$KUBE_CONFIG_CONTENT" > "$RUNNER_TEMP/kubeconfig.yaml"
+            printf 'KUBE_CONFIG_PATH=%s\n' "$RUNNER_TEMP/kubeconfig.yaml" >> "$GITHUB_ENV"
+          fi
           if [[ -n "$TF_VARS_CONTENT" ]]; then
             printf '%s' "$TF_VARS_CONTENT" > "$RUNNER_TEMP/runtime.auto.tfvars"
             cp "$RUNNER_TEMP/runtime.auto.tfvars" ./runtime.auto.tfvars
@@ -72,7 +72,13 @@ jobs:
       - name: Format check
         run: terraform fmt -check -recursive
       - name: Initialize backend
-        run: terraform init -input=false -backend-config="$RUNNER_TEMP/backend.hcl"
+        shell: bash
+        run: |
+          if [[ -s "$RUNNER_TEMP/backend.hcl" ]]; then
+            terraform init -input=false -backend-config="$RUNNER_TEMP/backend.hcl"
+          else
+            terraform init -input=false
+          fi
       - name: Validate
         run: terraform validate
       - name: Plan

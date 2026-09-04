@@ -12,4 +12,4 @@ Uygulama ve altyapı repolarının çağıracağı reusable GitHub Actions iş a
 
 Workflow referanslarını `@main` yerine immutable release tag veya commit SHA ile kullanın. Buradaki action sürümleri 2026-09-03 tarihinde resmi repolarındaki güncel release'lere sabitlenmiştir.
 
-Terraform workflow'u çalıştığında `TF_BACKEND_CONFIG` secret'ındaki backend HCL'i kullanarak init eder; bu taslak oluşturma sırasında hiçbir `terraform init` çalıştırılmamıştır. Apply yalnızca caller açıkça `apply: true` gönderdiğinde ve GitHub Environment koruması geçildiğinde yapılır.
+Terraform workflow'u `TF_BACKEND_CONFIG` verilirse bu backend HCL'iyle init eder. Kubernetes backend kullanan repolarda kubeconfig `KUBE_CONFIG` secret'ından geçici dosyaya yazılır ve `KUBE_CONFIG_PATH` ile backend'e sunulur. Bootstrap'ın local backend'i için iki secret da isteğe bağlıdır. Apply yalnızca caller açıkça `apply: true` gönderdiğinde ve GitHub Environment koruması geçildiğinde yapılır.
