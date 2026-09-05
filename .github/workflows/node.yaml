@@ -26,6 +26,10 @@ on:
         type: boolean
         required: false
         default: false
+      upload-sarif:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -99,6 +103,6 @@ jobs:
           ignore-unfixed: true
           exit-code: "1"
       - uses: github/codeql-action/upload-sarif@v4
-        if: always()
+        if: always() && inputs.upload-sarif
         with:
           sarif_file: trivy-results.sarif
