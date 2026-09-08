@@ -89,21 +89,41 @@ jobs:
         with:
           context: .
           file: ${{ inputs.dockerfile }}
-          push: ${{ inputs.push-image }}
-          load: ${{ !inputs.push-image }}
+          push: false
+          load: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-      - uses: aquasecurity/trivy-action@v0.36.0
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
+          version: v0.74.0
+          image-ref: ${{ inputs.image-name }}:${{ steps.meta.outputs.version }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Generate SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        if: inputs.upload-sarif
+        with:
+          version: v0.74.0
           image-ref: ${{ inputs.image-name }}:${{ steps.meta.outputs.version }}
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
           ignore-unfixed: true
-          exit-code: "1"
+          exit-code: "0"
       - uses: github/codeql-action/upload-sarif@v4
         if: always() && inputs.upload-sarif
         with:
           sarif_file: trivy-results.sarif
+      - name: Publish image
+        if: inputs.push-image
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done <<< '${{ steps.meta.outputs.tags }}'
