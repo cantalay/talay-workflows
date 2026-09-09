@@ -18,6 +18,8 @@ Java, Node ve Web workflow'larında Trivy HIGH/CRITICAL bulguları build'i durdu
 geçen image publish edilirken BuildKit SBOM ve provenance attestations da GHCR manifestine eklenir.
 SARIF yükleme, private repolarda GitHub Code Security lisansı zorunluluğu oluşturmaması için
 varsayılan olarak kapalıdır; Code Scanning açık repolar `upload-sarif: true` gönderebilir.
+Tüm build ve IaC workflow'ları bağımlılık kurulumundan ve secret dosyaları oluşturulmadan önce
+tracked çalışma ağacını Trivy secret scanner ile tarar; bir bulgu pipeline'ı durdurur.
 
 pnpm kullanan Node/Web/Expo çağrıları `pnpm-version` ile sürümü sabitler; pnpm, Node dependency
 cache hazırlanmasından önce kurulur. Terraform caller'ları Keycloak ve Vault provider bilgilerini

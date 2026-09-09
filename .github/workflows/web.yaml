@@ -48,6 +48,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7.0.1
+      - name: Scan repository for exposed secrets
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          vuln-type: os
+          format: table
+          exit-code: "1"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
         if: inputs.package-manager == 'pnpm'
         with:
