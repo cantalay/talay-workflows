@@ -20,6 +20,8 @@ SARIF yükleme, private repolarda GitHub Code Security lisansı zorunluluğu olu
 varsayılan olarak kapalıdır; Code Scanning açık repolar `upload-sarif: true` gönderebilir.
 Tüm build ve IaC workflow'ları bağımlılık kurulumundan ve secret dosyaları oluşturulmadan önce
 tracked çalışma ağacını Trivy secret scanner ile tarar; bir bulgu pipeline'ı durdurur.
+Terraform yapılandırmaları ile Helm'in render ettiği Kubernetes kaynakları ayrıca HIGH/CRITICAL
+misconfiguration taramasından geçmeden planlanamaz veya paketlenemez.
 
 pnpm kullanan Node/Web/Expo çağrıları `pnpm-version` ile sürümü sabitler; pnpm, Node dependency
 cache hazırlanmasından önce kurulur. Terraform caller'ları Keycloak ve Vault provider bilgilerini
