@@ -11,6 +11,10 @@ on:
         type: string
         required: false
         default: npm
+      pnpm-version:
+        type: string
+        required: false
+        default: "11.25.0"
       platform:
         type: string
         required: false
@@ -36,6 +40,10 @@ jobs:
     environment: mobile-${{ inputs.profile }}
     steps:
       - uses: actions/checkout@v7.0.1
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        if: inputs.package-manager == 'pnpm'
+        with:
+          version: ${{ inputs.pnpm-version }}
       - uses: actions/setup-node@v7.0.0
         with:
           node-version: ${{ inputs.node-version }}
@@ -48,11 +56,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          corepack enable
           case "${{ inputs.package-manager }}" in
             npm) npm ci && npm test ;;
             pnpm) pnpm install --frozen-lockfile && pnpm test ;;
-            yarn) yarn install --immutable && yarn test ;;
+            yarn) corepack enable && yarn install --immutable && yarn test ;;
             *) exit 2 ;;
           esac
       - name: EAS build

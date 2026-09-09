@@ -26,6 +26,12 @@ on:
         required: false
       KUBE_CONFIG:
         required: false
+      KEYCLOAK_USER:
+        required: false
+      KEYCLOAK_PASSWORD:
+        required: false
+      VAULT_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -43,6 +49,9 @@ jobs:
     env:
       TF_IN_AUTOMATION: "true"
       TF_INPUT: "false"
+      KEYCLOAK_USER: ${{ secrets.KEYCLOAK_USER }}
+      KEYCLOAK_PASSWORD: ${{ secrets.KEYCLOAK_PASSWORD }}
+      VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: hashicorp/setup-terraform@v4.0.1

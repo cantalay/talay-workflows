@@ -104,11 +104,15 @@ jobs:
         if: always() && inputs.upload-sarif
         with:
           sarif_file: trivy-results.sarif
-      - name: Publish image
+      - name: Publish image with SBOM and provenance
         if: inputs.push-image
-        shell: bash
-        run: |
-          set -euo pipefail
-          while IFS= read -r tag; do
-            docker push "$tag"
-          done <<< '${{ steps.meta.outputs.tags }}'
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: mode=max
+          sbom: true

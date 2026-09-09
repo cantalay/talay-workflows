@@ -14,6 +14,13 @@ Workflow referanslarını `@main` yerine immutable release tag veya commit SHA i
 
 Terraform workflow'u `TF_BACKEND_CONFIG` verilirse bu backend HCL'iyle init eder. Kubernetes backend kullanan repolarda kubeconfig `KUBE_CONFIG` secret'ından geçici dosyaya yazılır ve `KUBE_CONFIG_PATH` ile backend'e sunulur. Bootstrap'ın local backend'i için iki secret da isteğe bağlıdır. Apply yalnızca caller açıkça `apply: true` gönderdiğinde ve GitHub Environment koruması geçildiğinde yapılır.
 
-Java, Node ve Web workflow'larında Trivy HIGH/CRITICAL bulguları build'i durdurur. SARIF yükleme, private repolarda GitHub Code Security lisansı zorunluluğu oluşturmaması için varsayılan olarak kapalıdır; Code Scanning açık repolar `upload-sarif: true` gönderebilir.
+Java, Node ve Web workflow'larında Trivy HIGH/CRITICAL bulguları build'i durdurur. Taramadan
+geçen image publish edilirken BuildKit SBOM ve provenance attestations da GHCR manifestine eklenir.
+SARIF yükleme, private repolarda GitHub Code Security lisansı zorunluluğu oluşturmaması için
+varsayılan olarak kapalıdır; Code Scanning açık repolar `upload-sarif: true` gönderebilir.
+
+pnpm kullanan Node/Web/Expo çağrıları `pnpm-version` ile sürümü sabitler; pnpm, Node dependency
+cache hazırlanmasından önce kurulur. Terraform caller'ları Keycloak ve Vault provider bilgilerini
+yalnız reusable workflow secret girişleriyle aktarabilir; bu değerler dosyaya yazılmaz.
 
 Eski veya merkezi private GHCR paketleri repo `GITHUB_TOKEN` erişimi vermiyorsa çağıran repo mevcut `GHCR_PAT` secret'ını opsiyonel `GHCR_TOKEN` olarak geçirir. Yeni paketlerde repository Actions access tanımlanıp kısa ömürlü `GITHUB_TOKEN` tercih edilmelidir.
