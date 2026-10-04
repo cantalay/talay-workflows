@@ -37,6 +37,13 @@ on:
     secrets:
       GHCR_TOKEN:
         required: false
+    outputs:
+      image-tag:
+        description: Immutable image tag (sha-<7>) published on this run; empty when push-image is false.
+        value: ${{ jobs.test-build-scan.outputs.image-tag }}
+      image-digest:
+        description: sha256 digest of the published image manifest; empty when push-image is false.
+        value: ${{ jobs.test-build-scan.outputs.image-digest }}
 
 permissions:
   contents: read
@@ -46,6 +53,9 @@ permissions:
 jobs:
   test-build-scan:
     runs-on: ubuntu-24.04
+    outputs:
+      image-tag: ${{ inputs.push-image && steps.meta.outputs.version || '' }}
+      image-digest: ${{ steps.publish.outputs.digest }}
     steps:
       - uses: actions/checkout@v7.0.1
       - name: Scan repository for exposed secrets
@@ -139,6 +149,7 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
       - name: Publish image with SBOM and provenance
+        id: publish
         if: inputs.push-image
         uses: docker/build-push-action@v7.3.0
         with:

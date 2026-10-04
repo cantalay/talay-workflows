@@ -8,7 +8,7 @@ Uygulama ve altyapı repolarının çağıracağı reusable GitHub Actions iş a
 - `node.yaml`: Node 24, npm/pnpm/yarn test, container build ve Trivy
 - `web.yaml`: React/Vite/Expo Web build ve static container
 - `expo.yaml`: React Native Android/iOS EAS build
-- `promote-image.yaml`: immutable image tag'ını environments reposuna PR olarak taşır
+- `promote-image.yaml`: yayınlanan image'ın tag + digest'ini talay-environments values dosyalarına yazar (varsayılan doğrudan commit, `mode: pull-request` ile PR); Argo CD otomatik yayına alır
 
 Workflow referanslarını `@main` yerine immutable release tag veya commit SHA ile kullanın. Buradaki action sürümleri 2026-09-03 tarihinde resmi repolarındaki güncel release'lere sabitlenmiştir.
 
@@ -28,3 +28,30 @@ cache hazırlanmasından önce kurulur. Terraform caller'ları Keycloak ve Vault
 yalnız reusable workflow secret girişleriyle aktarabilir; bu değerler dosyaya yazılmaz.
 
 Eski veya merkezi private GHCR paketleri repo `GITHUB_TOKEN` erişimi vermiyorsa çağıran repo mevcut `GHCR_PAT` secret'ını opsiyonel `GHCR_TOKEN` olarak geçirir. Yeni paketlerde repository Actions access tanımlanıp kısa ömürlü `GITHUB_TOKEN` tercih edilmelidir.
+
+## Otomatik yayına alma
+
+`java.yaml`, `node.yaml` ve `web.yaml` push edilen image için `image-tag` (`sha-<7>`) ve `image-digest` çıktısı verir.
+Uygulama reposu bunları `promote-image.yaml`'a geçirir:
+
+```yaml
+jobs:
+  build:
+    uses: cantalay/talay-workflows/.github/workflows/node.yaml@<sha>
+    with: { image-name: ghcr.io/cantalay/<image>, push-image: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }} }
+  promote:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: cantalay/talay-workflows/.github/workflows/promote-image.yaml@<sha>
+    with:
+      values-files: |
+        apps/prod/<project>/<component>/values.yaml
+      image-tag: ${{ needs.build.outputs.image-tag }}
+      image-digest: ${{ needs.build.outputs.image-digest }}
+    secrets:
+      APP_ID: ${{ secrets.TALAY_PROMOTER_APP_ID }}
+      APP_PRIVATE_KEY: ${{ secrets.TALAY_PROMOTER_PRIVATE_KEY }}
+```
+
+GitHub App `cantalay-talay-promoter` yalnız `talay-environments` reposuna Contents: write yetkisiyle kuruludur. Aynı image'ı
+kullanan bütün component'ler (`values-files`) tek commit'te güncellenir; eşzamanlı promotion'lar rebase ile yeniden denenir.

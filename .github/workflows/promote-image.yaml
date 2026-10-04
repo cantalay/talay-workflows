@@ -1,24 +1,47 @@
 name: reusable-promote-image
 
+# Writes an immutable image tag (and digest) into talay-environments values files so Argo CD deploys it.
+# Default mode commits straight to the target branch; mode "pull-request" opens a PR instead.
+
 on:
   workflow_call:
     inputs:
       environments-repository:
         type: string
-        required: true
+        required: false
+        default: talay-environments
       environments-owner:
         type: string
-        required: true
+        required: false
+        default: cantalay
+      values-files:
+        description: Newline or space separated values.yaml paths in the environments repository (all use the same image).
+        type: string
+        required: false
+        default: ""
       values-file:
+        description: Deprecated single-file form of values-files.
         type: string
-        required: true
+        required: false
+        default: ""
       image-tag:
+        description: Immutable tag, sha-<7 hex>.
         type: string
         required: true
+      image-digest:
+        description: sha256:<64 hex> manifest digest; written to image.digest when given.
+        type: string
+        required: false
+        default: ""
       target-branch:
         type: string
         required: false
         default: main
+      mode:
+        description: commit (push to target-branch) or pull-request.
+        type: string
+        required: false
+        default: commit
     secrets:
       APP_ID:
         required: true
@@ -28,10 +51,32 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: promote-${{ github.repository }}-${{ inputs.target-branch }}
+  cancel-in-progress: false
+
 jobs:
   promote:
     runs-on: ubuntu-24.04
     steps:
+      - name: Validate inputs
+        id: inputs
+        shell: bash
+        env:
+          FILES: ${{ inputs.values-files }} ${{ inputs.values-file }}
+          TAG: ${{ inputs.image-tag }}
+          DIGEST: ${{ inputs.image-digest }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          set -euo pipefail
+          [[ "$TAG" =~ ^sha-[0-9a-f]{7,40}$ ]] || { echo "image-tag must be sha-<hex>: $TAG" >&2; exit 1; }
+          [[ -z "$DIGEST" || "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "image-digest must be sha256:<64 hex>" >&2; exit 1; }
+          [[ "$MODE" == commit || "$MODE" == pull-request ]] || { echo "mode must be commit or pull-request" >&2; exit 1; }
+          files="$(echo "$FILES" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')"
+          [[ -n "$files" ]] || { echo "values-files is required" >&2; exit 1; }
+          for f in $files; do [[ "$f" =~ ^apps/(dev|stage|prod)/[a-z0-9-]+/[a-z0-9-]+/values\.yaml$ ]] || { echo "unexpected values path: $f" >&2; exit 1; }; done
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
       - id: app-token
         uses: actions/create-github-app-token@v3.2.0
         with:
@@ -39,20 +84,92 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           owner: ${{ inputs.environments-owner }}
           repositories: ${{ inputs.environments-repository }}
+
       - uses: actions/checkout@v7.0.1
         with:
           repository: ${{ inputs.environments-owner }}/${{ inputs.environments-repository }}
           ref: ${{ inputs.target-branch }}
           token: ${{ steps.app-token.outputs.token }}
-      - name: Update immutable image tag
-        uses: mikefarah/yq@v4.53.6
-        with:
-          cmd: yq -i '.image.tag = "${{ inputs.image-tag }}"' '${{ inputs.values-file }}'
+          fetch-depth: 0
+
+      - name: Update image references
+        id: update
+        shell: bash
+        env:
+          FILES: ${{ steps.inputs.outputs.files }}
+          TAG: ${{ inputs.image-tag }}
+          DIGEST: ${{ inputs.image-digest }}
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/set-image.py" <<'PY'
+          import os, re, sys
+          # Rewrites only image.tag / image.digest inside the top-level `image:` block, keeping formatting.
+          path, tag, digest = sys.argv[1], os.environ["TAG"], os.environ.get("DIGEST", "")
+          lines = open(path).read().split("\n")
+          start = next((i for i, l in enumerate(lines) if l.rstrip() == "image:"), None)
+          if start is None:
+              sys.exit(f"{path}: no top-level image: block")
+          end = next((i for i in range(start + 1, len(lines)) if lines[i] and not lines[i].startswith((" ", "#"))), len(lines))
+          block = lines[start + 1:end]
+          if not any(re.match(r"^\s+repository:\s*\S", l) for l in block):
+              sys.exit(f"{path}: image.repository missing")
+          indent = next(re.match(r"^(\s+)", l).group(1) for l in block if l.strip())
+          def put(key, value, after):
+              for i, l in enumerate(block):
+                  if re.match(rf"^{indent}{key}:", l):
+                      block[i] = f'{indent}{key}: "{value}"'
+                      return
+              pos = next((i + 1 for i, l in enumerate(block) if re.match(rf"^{indent}{after}:", l)), len(block))
+              block.insert(pos, f'{indent}{key}: "{value}"')
+          put("tag", tag, "repository")
+          if digest:
+              put("digest", digest, "tag")
+          lines[start + 1:end] = block
+          open(path, "w").write("\n".join(lines))
+          PY
+          for f in $FILES; do
+            test -f "$f" || { echo "missing $f" >&2; exit 1; }
+            python3 "$RUNNER_TEMP/set-image.py" "$f"
+          done
+          if git diff --quiet; then echo "changed=false" >> "$GITHUB_OUTPUT"; echo "Already at $TAG"; else echo "changed=true" >> "$GITHUB_OUTPUT"; fi
+          git diff
+
+      - name: Commit to ${{ inputs.target-branch }}
+        if: steps.update.outputs.changed == 'true' && inputs.mode == 'commit'
+        shell: bash
+        env:
+          FILES: ${{ steps.inputs.outputs.files }}
+          TAG: ${{ inputs.image-tag }}
+          DIGEST: ${{ inputs.image-digest }}
+          BRANCH: ${{ inputs.target-branch }}
+          SOURCE: ${{ github.repository }}@${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git config user.name "talay-promoter[bot]"
+          git config user.email "talay-promoter[bot]@users.noreply.github.com"
+          components="$(for f in $FILES; do echo "$f" | cut -d/ -f3-4; done | paste -sd, -)"
+          git add $FILES
+          git commit -m "chore(prod): promote ${components} to ${TAG}" -m "Automated promotion from ${SOURCE}."
+          for attempt in 1 2 3 4 5; do
+            if git push origin "HEAD:${BRANCH}"; then exit 0; fi
+            echo "push rejected (attempt $attempt), rebasing"
+            sleep $((attempt * 3))
+            git fetch origin "$BRANCH"
+            git reset --hard "origin/${BRANCH}"
+            for f in $FILES; do python3 "$RUNNER_TEMP/set-image.py" "$f"; done
+            git diff --quiet && { echo "already promoted upstream"; exit 0; }
+            git add $FILES
+            git commit -m "chore(prod): promote ${components} to ${TAG}" -m "Automated promotion from ${SOURCE}."
+          done
+          echo "could not push after retries" >&2
+          exit 1
+
       - uses: peter-evans/create-pull-request@v8.1.1
+        if: steps.update.outputs.changed == 'true' && inputs.mode == 'pull-request'
         with:
           token: ${{ steps.app-token.outputs.token }}
-          branch: promote/${{ inputs.image-tag }}
+          branch: promote/${{ github.event.repository.name }}/${{ inputs.image-tag }}
           delete-branch: true
-          commit-message: "chore: promote image to ${{ inputs.image-tag }}"
-          title: "chore: promote image to ${{ inputs.image-tag }}"
+          commit-message: "chore(prod): promote ${{ github.event.repository.name }} to ${{ inputs.image-tag }}"
+          title: "chore(prod): promote ${{ github.event.repository.name }} to ${{ inputs.image-tag }}"
           body: Automated immutable image promotion from `${{ github.repository }}@${{ github.sha }}`.
