@@ -1,0 +1,137 @@
+name: reusable-python
+
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        type: string
+        required: false
+        default: "3.12"
+      test-command:
+        type: string
+        required: false
+        default: uv run ruff check . && uv run pytest -q
+      image-name:
+        type: string
+        required: true
+      push-image:
+        type: boolean
+        required: false
+        default: false
+      dockerfile:
+        type: string
+        required: false
+        default: Dockerfile
+      upload-sarif:
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      GHCR_TOKEN:
+        required: false
+    outputs:
+      image-tag:
+        description: Immutable image tag (sha-<7>) published on this run; empty when push-image is false.
+        value: ${{ jobs.test-build-scan.outputs.image-tag }}
+      image-digest:
+        description: sha256 digest of the published image manifest; empty when push-image is false.
+        value: ${{ jobs.test-build-scan.outputs.image-digest }}
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  test-build-scan:
+    runs-on: ubuntu-24.04
+    outputs:
+      image-tag: ${{ inputs.push-image && steps.meta.outputs.version || '' }}
+      image-digest: ${{ steps.publish.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Scan repository for exposed secrets
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          cache-dir: ${{ runner.temp }}/trivy
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          vuln-type: os
+          format: table
+          exit-code: "1"
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: ${{ inputs.python-version }}
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - name: Install (uv.lock)
+        run: uv sync --frozen
+      - name: Lint and test
+        shell: bash
+        env:
+          TEST_COMMAND: ${{ inputs.test-command }}
+        run: bash -euo pipefail -c "$TEST_COMMAND"
+      - uses: docker/setup-buildx-action@v4.3.0
+      - uses: docker/login-action@v4.6.0
+        if: inputs.push-image
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN || github.token }}
+      - id: meta
+        uses: docker/metadata-action@v6.2.0
+        with:
+          images: ${{ inputs.image-name }}
+          tags: |
+            type=sha,prefix=sha-
+            type=ref,event=tag
+      - uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: false
+          load: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Scan image
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          image-ref: ${{ inputs.image-name }}:${{ steps.meta.outputs.version }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Generate SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        if: inputs.upload-sarif
+        with:
+          version: v0.74.0
+          image-ref: ${{ inputs.image-name }}:${{ steps.meta.outputs.version }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "0"
+      - uses: github/codeql-action/upload-sarif@v4
+        if: always() && inputs.upload-sarif
+        with:
+          sarif_file: trivy-results.sarif
+      - name: Publish image with SBOM and provenance
+        id: publish
+        if: inputs.push-image
+        uses: docker/build-push-action@v7.3.0
+        with:
+          context: .
+          file: ${{ inputs.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          provenance: mode=max
+          sbom: true

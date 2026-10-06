@@ -6,6 +6,7 @@ Uygulama ve altyapı repolarının çağıracağı reusable GitHub Actions iş a
 - `helm.yaml`: dependency, lint, render ve package
 - `java.yaml`: Java 25 (LTS), Maven/Gradle test, container build ve Trivy
 - `node.yaml`: Node 24, npm/pnpm/yarn test, container build ve Trivy
+- `python.yaml`: Python 3.12 + uv (`uv.lock`), ruff + pytest, container build ve Trivy
 - `web.yaml`: React/Vite/Expo Web build ve static container
 - `expo.yaml`: React Native Android/iOS EAS build
 - `promote-image.yaml`: yayınlanan image'ın tag + digest'ini talay-environments values dosyalarına yazar (varsayılan doğrudan commit, `mode: pull-request` ile PR); Argo CD otomatik yayına alır
@@ -14,7 +15,7 @@ Workflow referanslarını `@main` yerine immutable release tag veya commit SHA i
 
 Terraform workflow'u `TF_BACKEND_CONFIG` verilirse bu backend HCL'iyle init eder. Kubernetes backend kullanan repolarda kubeconfig `KUBE_CONFIG` secret'ından geçici dosyaya yazılır ve `KUBE_CONFIG_PATH` ile backend'e sunulur. Bootstrap'ın local backend'i için iki secret da isteğe bağlıdır. Apply yalnızca caller açıkça `apply: true` gönderdiğinde ve GitHub Environment koruması geçildiğinde yapılır.
 
-Java, Node ve Web workflow'larında Trivy HIGH/CRITICAL bulguları build'i durdurur. Taramadan
+Java, Node, Python ve Web workflow'larında Trivy HIGH/CRITICAL bulguları build'i durdurur. Taramadan
 geçen image publish edilirken BuildKit SBOM ve provenance attestations da GHCR manifestine eklenir.
 SARIF yükleme, private repolarda GitHub Code Security lisansı zorunluluğu oluşturmaması için
 varsayılan olarak kapalıdır; Code Scanning açık repolar `upload-sarif: true` gönderebilir.
@@ -31,7 +32,7 @@ Eski veya merkezi private GHCR paketleri repo `GITHUB_TOKEN` erişimi vermiyorsa
 
 ## Otomatik yayına alma
 
-`java.yaml`, `node.yaml` ve `web.yaml` push edilen image için `image-tag` (`sha-<7>`) ve `image-digest` çıktısı verir.
+`java.yaml`, `node.yaml`, `python.yaml` ve `web.yaml` push edilen image için `image-tag` (`sha-<7>`) ve `image-digest` çıktısı verir.
 Uygulama reposu bunları `promote-image.yaml`'a geçirir:
 
 ```yaml
