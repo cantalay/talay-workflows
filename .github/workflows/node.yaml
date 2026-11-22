@@ -15,6 +15,16 @@ on:
         type: string
         required: false
         default: "11.25.0"
+      npm-scope:
+        description: npm scope served by a private registry (e.g. "@cantalay"); empty keeps the public registry only.
+        type: string
+        required: false
+        default: ""
+      npm-registry:
+        description: Registry URL for npm-scope.
+        type: string
+        required: false
+        default: https://npm.pkg.github.com
       test-command:
         type: string
         required: false
@@ -34,6 +44,10 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      NPM_TOKEN:
+        description: Registry token for npm-scope; defaults to the job GITHUB_TOKEN.
+        required: false
     outputs:
       image-tag:
         description: Immutable image tag (sha-<7>) published on this run; empty when push-image is false.
@@ -74,8 +88,26 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
+      - name: Configure npm scope registry
+        if: inputs.npm-scope != ''
+        shell: bash
+        env:
+          NPM_SCOPE: ${{ inputs.npm-scope }}
+          NPM_REGISTRY: ${{ inputs.npm-registry }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$NPM_SCOPE" =~ ^@[a-z0-9][a-z0-9._-]*$ ]]; then echo "Invalid npm-scope: $NPM_SCOPE" >&2; exit 2; fi
+          host="${NPM_REGISTRY#https://}"; host="${host%/}"
+          # Token stays in the environment: ~/.npmrc only references ${NPM_TOKEN} (pnpm/npm expand user-level config).
+          {
+            echo "${NPM_SCOPE}:registry=${NPM_REGISTRY}"
+            echo "//${host}/:_authToken=\${NPM_TOKEN}"
+          } >> ~/.npmrc
+          chmod 600 ~/.npmrc
       - name: Install, test and build
         shell: bash
+        env:
+          NPM_TOKEN: ${{ inputs.npm-scope != '' && (secrets.NPM_TOKEN || github.token) || '' }}
         run: |
           set -euo pipefail
           case "${{ inputs.package-manager }}" in

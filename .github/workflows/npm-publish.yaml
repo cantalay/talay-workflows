@@ -1,0 +1,141 @@
+name: reusable-npm-publish
+
+# Publishes the non-private packages of a pnpm workspace with Changesets ("version in the PR" flow: versions and
+# CHANGELOGs are already committed, no bot PR). Idempotent: versions already in the registry are skipped and reported
+# as "already published"; missing `<name>@<version>` git tags are (re)created at the current commit and pushed.
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        type: string
+        required: false
+        default: "24"
+      pnpm-version:
+        type: string
+        required: false
+        default: "11.25.0"
+      npm-scope:
+        description: Scope published to npm-registry (e.g. "@cantalay").
+        type: string
+        required: true
+      npm-registry:
+        type: string
+        required: false
+        default: https://npm.pkg.github.com
+      build-script:
+        description: Package script run in every workspace package that defines it (pnpm -r --if-present run).
+        type: string
+        required: false
+        default: build
+      dry-run:
+        description: Build and report the publish plan without publishing or tagging.
+        type: boolean
+        required: false
+        default: false
+    secrets:
+      NPM_TOKEN:
+        description: Publish token; defaults to the job GITHUB_TOKEN (packages write).
+        required: false
+    outputs:
+      tags:
+        description: JSON array of "<name>@<version>" git tags created by this run (new publishes and repaired tags).
+        value: ${{ jobs.publish.outputs.tags }}
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    outputs:
+      tags: ${{ steps.publish.outputs.tags }}
+    env:
+      NPM_SCOPE: ${{ inputs.npm-scope }}
+      NPM_REGISTRY: ${{ inputs.npm-registry }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Scan repository for exposed secrets
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          version: v0.74.0
+          cache-dir: ${{ runner.temp }}/trivy
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          vuln-type: os
+          format: table
+          exit-code: "1"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: ${{ inputs.pnpm-version }}
+      - uses: actions/setup-node@v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: pnpm
+      - name: Configure npm scope registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$NPM_SCOPE" =~ ^@[a-z0-9][a-z0-9._-]*$ ]]; then echo "Invalid npm-scope: $NPM_SCOPE" >&2; exit 2; fi
+          host="${NPM_REGISTRY#https://}"; host="${host%/}"
+          {
+            echo "${NPM_SCOPE}:registry=${NPM_REGISTRY}"
+            echo "//${host}/:_authToken=\${NPM_TOKEN}"
+          } >> ~/.npmrc
+          chmod 600 ~/.npmrc
+      - name: Install and build
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN || github.token }}
+          BUILD_SCRIPT: ${{ inputs.build-script }}
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm -r --if-present run "$BUILD_SCRIPT"
+      - name: Publish plan
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          pnpm -r ls --depth -1 --json > "$RUNNER_TEMP/packages.json"
+          node - "$RUNNER_TEMP/packages.json" <<'NODE' | tee -a "$GITHUB_STEP_SUMMARY"
+          const { execFileSync } = require('node:child_process');
+          const pkgs = JSON.parse(require('node:fs').readFileSync(process.argv[2], 'utf8'));
+          console.log('| Package | Version | Registry |\n| --- | --- | --- |');
+          for (const p of pkgs.filter((p) => !p.private && p.name && p.name.startsWith(`${process.env.NPM_SCOPE}/`))) {
+            let state = 'to publish';
+            try {
+              const out = execFileSync('pnpm', ['view', `${p.name}@${p.version}`, 'version', '--json'], {
+                encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+              });
+              if (out.trim()) state = 'already published';
+            } catch {
+              // 404: not published yet
+            }
+            console.log(`| ${p.name} | ${p.version} | ${state} |`);
+          }
+          NODE
+      - name: Publish and tag
+        id: publish
+        if: ${{ !inputs.dry-run }}
+        shell: bash
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          before=$(git tag --list)
+          pnpm exec changeset publish
+          # Tags for versions published earlier whose tag push failed (or never ran).
+          pnpm exec changeset git-tag
+          new=$(comm -13 <(printf '%s\n' "$before" | sort) <(git tag --list | sort) | sed '/^$/d')
+          if [ -n "$new" ]; then
+            printf '%s\n' "$new" | while read -r t; do git push origin "refs/tags/$t"; done
+          fi
+          json=$(printf '%s\n' "$new" | sed '/^$/d' | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>console.log(JSON.stringify(s.split("\n").filter(Boolean))))')
+          echo "tags=$json" >> "$GITHUB_OUTPUT"
+          if [ -z "$new" ]; then echo "Nothing new: every version is already published and tagged." | tee -a "$GITHUB_STEP_SUMMARY"; fi

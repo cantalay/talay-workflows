@@ -10,6 +10,7 @@ Uygulama ve altyapı repolarının çağıracağı reusable GitHub Actions iş a
 - `dotnet.yaml`: .NET (SDK `global.json`'dan), `dotnet test`, container build (monorepo için `context` + `dockerfile`) ve Trivy
 - `web.yaml`: React/Vite/Expo Web build ve static container
 - `expo.yaml`: React Native Android/iOS EAS build
+- `npm-publish.yaml`: pnpm workspace'inin private olmayan paketlerini Changesets ile npm kayıt defterine (varsayılan GitHub Packages) yayınlar ve `<ad>@<sürüm>` git etiketlerini iter; yayında olan sürüm atlanır (idempotent)
 - `promote-image.yaml`: yayınlanan image'ın tag + digest'ini talay-environments values dosyalarına yazar (varsayılan doğrudan commit, `mode: pull-request` ile PR); Argo CD otomatik yayına alır
 
 Workflow referanslarını `@main` yerine immutable release tag veya commit SHA ile kullanın. Buradaki action sürümleri 2026-09-03 tarihinde resmi repolarındaki güncel release'lere sabitlenmiştir.
@@ -57,3 +58,22 @@ jobs:
 
 GitHub App `cantalay-talay-promoter` yalnız `talay-environments` reposuna Contents: write yetkisiyle kuruludur. Aynı image'ı
 kullanan bütün component'ler (`values-files`) tek commit'te güncellenir; eşzamanlı promotion'lar rebase ile yeniden denenir.
+
+## Özel npm kapsamı (GitHub Packages)
+
+`node.yaml`, `web.yaml`, `expo.yaml` ve `npm-publish.yaml` isteğe bağlı `npm-scope` (ör. `@cantalay`) ve
+`npm-registry` (varsayılan `https://npm.pkg.github.com`) girdilerini alır. Verilirse kurulumdan önce `~/.npmrc`'ye
+kapsam kaydı ve `//<registry>/:_authToken=${NPM_TOKEN}` satırı yazılır; belirteç dosyaya yazılmaz, yalnız kurulum
+adımının ortamındadır (`secrets.NPM_TOKEN` verilmezse işin `GITHUB_TOKEN`'ı). pnpm 11 proje `.npmrc`'sindeki ortam
+değişkenli kimlik satırlarını yok saydığından kimlik kullanıcı düzeyi dosyada tutulur. `github.token` ile başka
+repodan paket okumak için paket ayarlarında o repoya "Manage Actions access" ile okuma verilmelidir.
+
+`web.yaml` ve `expo.yaml` artık `test-command` girdisi alır (varsayılan `test`; `node.yaml`'daki gibi). Girdiler
+verilmezse davranış öncekiyle aynıdır.
+
+```yaml
+jobs:
+  publish:
+    uses: cantalay/talay-workflows/.github/workflows/npm-publish.yaml@<sha>
+    with: { npm-scope: '@cantalay' }   # pnpm -r --if-present run build → changeset publish → etiketler
+```

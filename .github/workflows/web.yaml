@@ -15,6 +15,21 @@ on:
         type: string
         required: false
         default: "11.25.0"
+      npm-scope:
+        description: npm scope served by a private registry (e.g. "@cantalay"); empty keeps the public registry only.
+        type: string
+        required: false
+        default: ""
+      npm-registry:
+        description: Registry URL for npm-scope.
+        type: string
+        required: false
+        default: https://npm.pkg.github.com
+      test-command:
+        description: Package script run after install (npm/pnpm run, yarn <script>).
+        type: string
+        required: false
+        default: test
       build-command:
         type: string
         required: false
@@ -35,6 +50,9 @@ on:
         required: false
         default: false
     secrets:
+      NPM_TOKEN:
+        description: Registry token for npm-scope; defaults to the job GITHUB_TOKEN.
+        required: false
       GHCR_TOKEN:
         required: false
     outputs:
@@ -77,25 +95,44 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: ${{ inputs.package-manager }}
+      - name: Configure npm scope registry
+        if: inputs.npm-scope != ''
+        shell: bash
+        env:
+          NPM_SCOPE: ${{ inputs.npm-scope }}
+          NPM_REGISTRY: ${{ inputs.npm-registry }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$NPM_SCOPE" =~ ^@[a-z0-9][a-z0-9._-]*$ ]]; then echo "Invalid npm-scope: $NPM_SCOPE" >&2; exit 2; fi
+          host="${NPM_REGISTRY#https://}"; host="${host%/}"
+          # Token stays in the environment: ~/.npmrc only references ${NPM_TOKEN} (pnpm/npm expand user-level config).
+          {
+            echo "${NPM_SCOPE}:registry=${NPM_REGISTRY}"
+            echo "//${host}/:_authToken=\${NPM_TOKEN}"
+          } >> ~/.npmrc
+          chmod 600 ~/.npmrc
       - name: Install, test and build SPA
         shell: bash
+        env:
+          NPM_TOKEN: ${{ inputs.npm-scope != '' && (secrets.NPM_TOKEN || github.token) || '' }}
+          TEST_COMMAND: ${{ inputs.test-command }}
         run: |
           set -euo pipefail
           case "${{ inputs.package-manager }}" in
             npm)
               npm ci
-              npm test
+              npm run "$TEST_COMMAND"
               npm run "${{ inputs.build-command }}"
               ;;
             pnpm)
               pnpm install --frozen-lockfile
-              pnpm test
+              pnpm run "$TEST_COMMAND"
               pnpm run "${{ inputs.build-command }}"
               ;;
             yarn)
               corepack enable
               yarn install --immutable
-              yarn test
+              yarn "$TEST_COMMAND"
               yarn "${{ inputs.build-command }}"
               ;;
             *) exit 2 ;;
